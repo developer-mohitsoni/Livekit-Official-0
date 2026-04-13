@@ -13,6 +13,7 @@ from livekit.agents import (
 from livekit.plugins import noise_cancellation, silero
 
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.agents import llm, stt, tts, inference
 
 load_dotenv()
 
@@ -20,7 +21,8 @@ load_dotenv()
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant.""",
+            instructions="You are an upbeat, slightly sarcastic voice AI for tech support. "
+            "Help the caller fix issues without rambling, and keep replies under 3 sentences.",
         )
 
     # To add tools, use the @function_tool decorator.
@@ -56,16 +58,32 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt="assemblyai/universal-streaming:en",
+        stt=stt.FallbackAdapter(
+            [
+                inference.STT.from_model_string("assemblyai/universal-streaming:en"),
+                inference.STT.from_model_string("deepgram/nova-3"),
+            ]
+        ),
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm="openai/gpt-4.1-mini",
+        llm=llm.FallbackAdapter(
+            [
+                inference.LLM(model="openai/gpt-4.1-mini"),
+                inference.LLM(model="google/gemini-2.5-flash"),
+            ]
+        ),
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts="cartesia/sonic-3",
+        tts=tts.FallbackAdapter(
+            [
+                inference.TTS.from_model_string(
+                    "cartesia/sonic-3:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+                ),
+                inference.TTS.from_model_string("inworld/inworld-tts-1"),
+            ]
+        ),
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
         # See more at https://docs.livekit.io/agents/build/turns
-        # turn_detection=MultilingualModel(),
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
         # allow the LLM to generate a response while waiting for the end of turn
