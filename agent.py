@@ -6,18 +6,27 @@ from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
+    ChatMessage,
+    ConversationItemAddedEvent,
     JobContext,
-    JobProcess,
+    SessionUsageUpdatedEvent,
+    TurnHandlingOptions,
     room_io,
 )
 from livekit.plugins import noise_cancellation, silero
 
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.agents import llm, stt, tts, inference
-from livekit.agents import AgentStateChangedEvent, MetricsCollectedEvent, metrics
-import time
 
 logger = logging.getLogger(__name__)
+
+
+def _format_seconds(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+
+    return f"{value:.3f}s"
+
 
 load_dotenv()
 
@@ -89,36 +98,39 @@ async def entrypoint(ctx: JobContext):
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
         # See more at https://docs.livekit.io/agents/build/turns
         vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        turn_handling=TurnHandlingOptions(
+            turn_detection=MultilingualModel(),
+        ),
         # allow the LLM to generate a response while waiting for the end of turn
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
 
-    usage_collector = metrics.UsageCollector()
-    last_eou_metrics: metrics.EOUMetrics | None = None
+    latest_usage = session.usage
 
-    @session.on("metrics_collected")
-    def _on_metrics_collected(event: MetricsCollectedEvent):
-        nonlocal last_eou_metrics
-        if event.metrics.type == "eou_metrics":
-            last_eou_metrics = event.metrics
-
-        metrics.log_metrics(event.metrics)
-        usage_collector.collect(event.metrics)
+    @session.on("session_usage_updated")
+    def _on_session_usage_updated(event: SessionUsageUpdatedEvent):
+        nonlocal latest_usage
+        latest_usage = event.usage
 
     async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage summary: %s", summary)
+        logger.info("Usage summary: %s", latest_usage)
 
     ctx.add_shutdown_callback(log_usage)
 
-    @session.on("agent_state_changed")
-    def _on_agent_state_changed(event: AgentStateChangedEvent):
-        if event.new_state == "speaking":
-            if last_eou_metrics:
-                elapsed = time.time() - last_eou_metrics.timestamp
-                logger.info(f"Time to first audio: {elapsed:.3f} seconds")
+    @session.on("conversation_item_added")
+    def _on_conversation_item_added(event: ConversationItemAddedEvent):
+        if not isinstance(event.item, ChatMessage) or event.item.role != "assistant":
+            return
+
+        turn_metrics = event.item.metrics
+        logger.info(
+            "Turn latency: e2e=%s, end_of_turn=%s, llm_ttft=%s, tts_ttfb=%s",
+            _format_seconds(turn_metrics.get("e2e_latency")),
+            _format_seconds(turn_metrics.get("end_of_turn_delay")),
+            _format_seconds(turn_metrics.get("llm_node_ttft")),
+            _format_seconds(turn_metrics.get("tts_node_ttfb")),
+        )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
