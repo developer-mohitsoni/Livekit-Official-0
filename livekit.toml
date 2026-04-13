@@ -1,0 +1,5 @@
+[project]
+  subdomain = "pipecat-agent-test-s0ms3b0h"
+
+[agent]
+  id = "CA_kvYNjEBVGiZn"
