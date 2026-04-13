@@ -14,6 +14,10 @@ from livekit.plugins import noise_cancellation, silero
 
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from livekit.agents import llm, stt, tts, inference
+from livekit.agents import AgentStateChangedEvent, MetricsCollectedEvent, metrics
+import time
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -88,8 +92,33 @@ async def entrypoint(ctx: JobContext):
         turn_detection=MultilingualModel(),
         # allow the LLM to generate a response while waiting for the end of turn
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
-        # preemptive_generation=True,
+        preemptive_generation=True,
     )
+
+    usage_collector = metrics.UsageCollector()
+    last_eou_metrics: metrics.EOUMetrics | None = None
+
+    @session.on("metrics_collected")
+    def _on_metrics_collected(event: MetricsCollectedEvent):
+        nonlocal last_eou_metrics
+        if event.metrics.type == "eou_metrics":
+            last_eou_metrics = event.metrics
+
+        metrics.log_metrics(event.metrics)
+        usage_collector.collect(event.metrics)
+
+    async def log_usage():
+        summary = usage_collector.get_summary()
+        logger.info(f"Usage summary: %s", summary)
+
+    ctx.add_shutdown_callback(log_usage)
+
+    @session.on("agent_state_changed")
+    def _on_agent_state_changed(event: AgentStateChangedEvent):
+        if event.new_state == "speaking":
+            if last_eou_metrics:
+                elapsed = time.time() - last_eou_metrics.timestamp
+                logger.info(f"Time to first audio: {elapsed:.3f} seconds")
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
