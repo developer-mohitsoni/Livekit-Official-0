@@ -12,7 +12,7 @@ from livekit.agents import (
 )
 from livekit.plugins import noise_cancellation, silero
 
-# from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 load_dotenv()
 
@@ -67,7 +67,7 @@ async def entrypoint(ctx: JobContext):
         # See more at https://docs.livekit.io/agents/build/turns
         # turn_detection=MultilingualModel(),
         vad=silero.VAD.load(),
-        # turn_detection=MultilingualModel(),
+        turn_detection=MultilingualModel(),
         # allow the LLM to generate a response while waiting for the end of turn
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         # preemptive_generation=True,
